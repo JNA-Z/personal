@@ -1,0 +1,52 @@
+# --- Xmake 编译产生的垃圾 ---
+.xmake/
+build/
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.idx
+
+# --- 编译产生的二进制文件 ---
+*.o
+*.obj
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+
+# --- STM32CubeMX 产生的备份文件 ---
+*.mxproject
+*.bak
+
+# --- VS Code 配置文件 (可选) ---
+# .vscode 文件夹通常包含本地设置，建议忽略。
+# 如果你想共享 launch.json (调试配置)，可以在这里把 .vscode 注释掉，或者只忽略 settings.json
+*.code-workspace
+
+# --- 系统生成的垃圾文件 ---
+.DS_Store
+Thumbs.db
+
+compile_commands.json
+
+.cache/
+.vscode/c_cpp_properties.json
+.vscode/compile_commands.json
+.xmake/
+build/
+
+
+# --- MDK-ARM 产生的备份文件---
+*.crf
+*.d
+MDK-ARM/DebugConfig/
+MDK-ARM/RTE/
+MDK-ARM/2026robot/
+MDK-ARM/2026robot.uvguix.*
+MDK-ARM/2026robot.uvoptx
+MDK-ARM/startup_stm32f407xx.lst
+
+ref/

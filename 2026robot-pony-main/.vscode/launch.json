@@ -1,0 +1,55 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch 2026robot (DAP)",
+            "cwd": "${workspaceRoot}",
+            "executable": "${workspaceRoot}\\build\\artifacts\\2026robot.elf",
+            "request": "launch",
+            "type": "cortex-debug",
+            "device": "STM32F767xx",
+            "interface": "swd",
+            "servertype": "openocd",
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/stm32f7x.cfg"
+            ],
+            "runToEntryPoint": "main",
+            "preLaunchTask": "build 2026robot",
+            "liveWatch": {
+                "enabled": true,
+                "samplesPerSecond": 4
+            },
+            // 添加以下 RTT 配置
+            "rttConfig": {
+                "enabled": true,
+                "address": "auto",
+                "clearSearch": false,
+                "decoders": [
+                    {
+                        "label": "",
+                        "port": 0,
+                        "type": "console"
+                    }
+                ]
+            }
+        },
+        {
+            "name": "Attach 2026robot (DAP)",
+            "cwd": "${workspaceRoot}",
+            "executable": "${workspaceRoot}\\build\\artifacts\\2026robot.elf",
+            "request": "attach",
+            "type": "cortex-debug",
+            "device": "STM32F767xx",
+            "interface": "swd",
+            "servertype": "openocd",
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/stm32f7x.cfg"
+            ]
+        },
+    ]
+}

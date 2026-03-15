@@ -1,0 +1,15 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build 2026robot",
+            "type": "shell",
+            "command": "xmake f -p cross -a arm -m debug && xmake build 2026robot",
+            "problemMatcher": [],          
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}
