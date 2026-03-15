@@ -1,0 +1,36 @@
+/* ============================================================================
+ * 误差计算函数
+ * ============================================================================ */
+
+int32_t patrol_line_get_error(patrol_line_t *self)
+{
+    int32_t res_avr = 0;
+    int32_t res_total = 0;
+    uint8_t i;
+    
+    if (self->adc == NULL) {
+        return 0;
+    }
+    
+    /* 获取原始ADC数据 */
+    const uint16_t *ad_raw = bsp_adc_photo_get_raw_array(self->adc);
+    
+    /* 计算当前误差 */
+    int32_t res = (int32_t)(ad_raw[self->compare_ad_left] - 
+                            ad_raw[self->compare_ad_right]);
+    
+    /* 更新误差数组 (移位滤波) */
+    self->error_avr[PATROL_LINE_ADC_CHANNELS - 1] = res;
+    
+    for (i = 0; i < PATROL_LINE_ADC_CHANNELS - 1; i++) {
+        self->error_avr[i] = self->error_avr[i + 1];
+        res_total += self->error_avr[i];
+    }
+    
+    /* 计算平均值 */
+    if (self->error_avr[0] != 0) {
+        res_avr = res_total / PATROL_LINE_ADC_CHANNELS;
+    }
+    
+    return res_avr;
+}

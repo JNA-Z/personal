@@ -1,0 +1,15 @@
+float patrol_line_get_error_yaw(patrol_line_t *self, float yaw_angle)
+{
+    float yaw_error;
+    
+    yaw_error = yaw_angle - self->yaw_compensation;
+    
+    /* 处理角度跨越360度的情况 */
+    if (yaw_error >= 270.0f && yaw_error <= 360.0f) {
+        yaw_error = -1.0f * (self->yaw_compensation - yaw_angle + 360.0f);
+    } else if (yaw_error <= -270.0f && yaw_error >= -360.0f) {
+        yaw_error = yaw_angle - self->yaw_compensation + 360.0f;
+    }
+    
+    return yaw_error;
+}
