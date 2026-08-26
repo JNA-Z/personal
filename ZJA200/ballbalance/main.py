@@ -176,6 +176,13 @@ vel_ema = 0.0            # 速度 EMA (cm/s)
 prev_x_cm = None         # 上一次 x_cm (cm), None 表示未初始化
 prev_time_ms = 0          # 上一次检测到球的时间戳 (ms)
 
+# ---- 加速度估算状态 (速度差分 → 加速度, 回传给 STM32 做前馈) ----
+ACCEL_EMA_ALPHA = 0.5     # 加速度 EMA 平滑系数 (0-1, 越大越灵敏)
+ACCEL_SCALE = 10.0        # 加速度编码: |a|/10 → 0~255, 覆盖 ±2550 cm/s²
+accel_ema = 0.0           # 加速度 EMA (cm/s²)
+prev_vel = 0.0            # 上一次速度 (cm/s)
+prev_vel_ms = 0           # 上一次速度的时间戳 (ms)
+
 
 def predict_x(x_cm, t_ms):
     """
@@ -208,12 +215,48 @@ def predict_x(x_cm, t_ms):
 def reset_predictor():
     """丢球时重置预测器, 避免过时数据污染下次计算。"""
     global vel_ema, prev_x_cm, prev_time_ms
+    global accel_ema, prev_vel, prev_vel_ms
     vel_ema = 0.0
     prev_x_cm = None
     prev_time_ms = 0
+    accel_ema = 0.0
+    prev_vel = 0.0
+    prev_vel_ms = 0
 
 
-def send_x_packet(x_cm):
+def update_accel(vel, t_ms):
+    """由速度差分估算加速度 (cm/s²), 带 EMA 平滑。
+
+    返回平滑后的加速度 accel_ema, 用于回传给 STM32 做加速度前馈。
+    """
+    global accel_ema, prev_vel, prev_vel_ms
+
+    if prev_vel_ms == 0:
+        prev_vel = vel
+        prev_vel_ms = t_ms
+        accel_ema = 0.0
+        return 0.0
+
+    dt = (t_ms - prev_vel_ms) / 1000.0
+    prev_vel_ms = t_ms
+
+    if dt <= 0.001:
+        return accel_ema
+
+    raw_acc = (vel - prev_vel) / dt          # cm/s²
+    prev_vel = vel
+    accel_ema = accel_ema * (1.0 - ACCEL_EMA_ALPHA) + raw_acc * ACCEL_EMA_ALPHA
+    return accel_ema
+
+
+def send_x_packet(x_cm, accel_cm_s2):
+    """发送 7 字节帧: 位置 + 加速度。
+
+    帧格式: [0xAA][0x08][sign][value][a_sign][a_value][checksum]
+      sign/value   : 位置 (|x_cm|*10)
+      a_sign/a_value: 加速度 (|accel|/ACCEL_SCALE), ACCEL_SCALE=10
+      checksum     : 前 6 字节求和 & 0xFF
+    """
     if serial is None:
         return
 
@@ -229,7 +272,19 @@ def send_x_packet(x_cm):
     if x_val > 255:
         x_val = 255
 
-    packet = [0xAA, 0x04, sign_x, x_val]
+    a_scaled = int(round(accel_cm_s2 / ACCEL_SCALE))
+
+    if a_scaled < 0:
+        sign_a = 1
+        a_val = -a_scaled
+    else:
+        sign_a = 0
+        a_val = a_scaled
+
+    if a_val > 255:
+        a_val = 255
+
+    packet = [0xAA, 0x08, sign_x, x_val, sign_a, a_val]
     checksum = sum(packet) & 0xFF
     serial.write(bytes(packet) + bytes([checksum]))
 
@@ -265,6 +320,7 @@ def point_at_cm(x_cm):
 x_cm = 0.0
 x_pred = 0.0
 vel = 0.0
+accel = 0.0
 
 while not app.need_exit():
         img = cam.read()
@@ -308,9 +364,9 @@ while not app.need_exit():
                 top_scores = ", ".join(
                     ["{:.3f}".format(objs[i].score) for i in range(min(5, len(objs)))]
                 ) if len(objs) > 0 else "none"
-                print("th={:.2f} top5=[{}] ball={} | raw={:.2f}cm pred={:.2f}cm vel={:.1f}cm/s".format(
+                print("th={:.2f} top5=[{}] ball={} | raw={:.2f}cm pred={:.2f}cm vel={:.1f}cm/s acc={:.0f}cm/s2".format(
                     CONF_TH, top_scores, "found" if ball else "miss",
-                    x_cm if ok else 0.0, x_pred, vel
+                    x_cm if ok else 0.0, x_pred, vel, accel if ok else 0.0
                 ))
 
             if ball:
@@ -335,8 +391,10 @@ while not app.need_exit():
             ok = 1
             # 微分预测补偿
             x_pred, vel = predict_x(x_cm, t_now)
-            # 检测到球才发包
-            send_x_packet(x_pred)
+            # 加速度: 速度差分 + EMA 平滑, 回传给 STM32 做前馈
+            accel = update_accel(vel, t_now)
+            # 检测到球才发包 (位置 + 加速度)
+            send_x_packet(x_pred, accel)
         else:
             # 丢球: 重置预测器, 停止发包
             # STM32 侧 200ms 无新帧即判定视觉超时 → 电机回零保持。

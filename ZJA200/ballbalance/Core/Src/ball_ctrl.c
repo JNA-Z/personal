@@ -53,6 +53,7 @@ void BallCtrl_Init(void)
   g_ball.param.kp              = BALL_CTRL_KP_DEFAULT;
   g_ball.param.ki              = BALL_CTRL_KI_DEFAULT;
   g_ball.param.kd              = BALL_CTRL_KD_DEFAULT;
+  g_ball.param.accel_ff        = BALL_CTRL_ACCEL_FF;
   g_ball.param.deadband_cm     = BALL_CTRL_DEADBAND_CM;
   g_ball.param.min_angle_deg   = BALL_CTRL_MIN_ANGLE_DEG;
   g_ball.param.max_angle_deg   = BALL_CTRL_MAX_ANGLE_DEG;
@@ -62,6 +63,7 @@ void BallCtrl_Init(void)
   g_ball.state.x_ball_cm    = 0.0f;
   g_ball.state.x_prev_cm    = 0.0f;
   g_ball.state.x_vel_cm_s   = 0.0f;
+  g_ball.state.accel_cm_s2  = 0.0f;
   g_ball.state.x_target_cm  = 0.0f;   /* 默认目标 0: 开机先稳球在中心 */
   g_ball.state.e_cm         = 0.0f;
   g_ball.state.e_integral   = 0.0f;
@@ -113,6 +115,7 @@ void BallCtrl_Update(void)
   {
     g_ball.state.x_prev_cm   = g_ball.state.x_ball_cm;
     g_ball.state.x_ball_cm   = frame.x_cm;
+    g_ball.state.accel_cm_s2 = frame.accel_cm_s2;   /* 视觉回传加速度 (前馈) */
     g_ball.state.t_last_frame = now;
   }
 
@@ -157,6 +160,14 @@ void BallCtrl_Update(void)
   float theta_i = g_ball.param.ki * g_ball.state.e_integral;  /* 积分项 */
   float theta   = theta_p + theta_i - theta_d;
 
+  /* 加速度前馈: 球正在加速时提前反向倾斜, 使电机摆动更平滑。
+   * 符号: 球向 +x 加速 (accel>0) → 需轨道左倾 (θ<0) 抑制 → 减去 K_ff·a。
+   * 限幅: 视觉加速度噪声大, 限制前馈最大影响, 防止到位前扰动 (调不到位)。 */
+  float theta_ff = g_ball.param.accel_ff * g_ball.state.accel_cm_s2;
+  if (theta_ff >  BALL_CTRL_ACCEL_FF_MAX_DEG) theta_ff =  BALL_CTRL_ACCEL_FF_MAX_DEG;
+  if (theta_ff < -BALL_CTRL_ACCEL_FF_MAX_DEG) theta_ff = -BALL_CTRL_ACCEL_FF_MAX_DEG;
+  theta -= theta_ff;
+
   /* 全局保存 PID 三项, 调试器实时监视 */
   g_ball.state.theta_p_deg = theta_p;
   g_ball.state.theta_i_deg = theta_i;
@@ -167,8 +178,9 @@ void BallCtrl_Update(void)
   if (!g_ball.state.vision_ok)
   {
     /* 视觉丢失: 电机回零保持;
-     * 同时清零速度估算, 防止视觉恢复瞬间微分项跳变 */
-    g_ball.state.x_vel_cm_s = 0.0f;
+     * 同时清零速度/加速度估算, 防止视觉恢复瞬间微分项跳变 */
+    g_ball.state.x_vel_cm_s   = 0.0f;
+    g_ball.state.accel_cm_s2  = 0.0f;
     theta = 0.0f;
   }
   else if (fabsf(e) < g_ball.param.deadband_cm)

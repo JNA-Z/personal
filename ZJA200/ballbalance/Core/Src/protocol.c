@@ -25,13 +25,16 @@ extern UART_HandleTypeDef huart1;
 typedef enum
 {
   PROTOCOL_STATE_IDLE,      /* 等待帧头 0xAA */
-  PROTOCOL_STATE_HEADER,    /* 已收帧头, 等待长度 0x04 */
-  PROTOCOL_STATE_SIGN,      /* 已收长度, 等待符号位 */
-  PROTOCOL_STATE_VALUE,     /* 已收符号位, 等待数值 */
-  PROTOCOL_STATE_CHECKSUM,  /* 已收数值, 等待校验和 */
+  PROTOCOL_STATE_HEADER,    /* 已收帧头, 等待长度字段 (0x04 旧 / 0x08 新) */
+  PROTOCOL_STATE_POS_SIGN,  /* 等待位置符号位 */
+  PROTOCOL_STATE_POS_VALUE, /* 等待位置数值 */
+  PROTOCOL_STATE_ACC_SIGN,  /* 等待加速度符号位 (仅新帧) */
+  PROTOCOL_STATE_ACC_VALUE, /* 等待加速度数值 (仅新帧) */
+  PROTOCOL_STATE_CHECKSUM,  /* 等待校验和 */
 } Protocol_State;
 
 static volatile Protocol_State rx_state = PROTOCOL_STATE_IDLE;
+static volatile uint8_t rx_new_frame = 0;   /* 0=旧5字节帧, 1=新7字节帧 */
 
 /* ---- 全局调试变量 (调试器实时监视) ---- */
 volatile uint8_t g_uart1_rx_buf[PROTOCOL_FRAME_LEN]; /* 正在组装的视觉帧 */
@@ -40,10 +43,16 @@ static uint8_t rx_byte;                       /* HAL_UART_Receive_IT 接收缓�
 volatile Protocol_Frame ball_pos;             /* 全局坐标数据 (中断中更新) */
 static volatile uint8_t  rx_frame_pending = 0;
 
-/* 校验和 = (Byte0 + Byte1 + Byte2 + Byte3) 取低 8 位 */
+/* 校验和 = 除校验字节外所有字节求和取低 8 位 (旧帧4字节, 新帧6字节) */
 static uint8_t Protocol_CheckSum(void)
 {
-  return (uint8_t)(g_uart1_rx_buf[0] + g_uart1_rx_buf[1] + g_uart1_rx_buf[2] + g_uart1_rx_buf[3]);
+  uint8_t sum = 0u;
+  uint8_t n   = rx_new_frame ? 6u : 4u;
+  for (uint8_t i = 0u; i < n; i++)
+  {
+    sum = (uint8_t)(sum + g_uart1_rx_buf[i]);
+  }
+  return sum;
 }
 
 /**
@@ -63,10 +72,17 @@ static void Protocol_ParseByte(uint8_t byte)
     break;
 
   case PROTOCOL_STATE_HEADER:
-    if (byte == PROTOCOL_LEN_FIELD)
+    if (byte == PROTOCOL_LEN_FIELD)          /* 旧帧 5 字节: 仅位置 */
     {
+      rx_new_frame = 0;
       g_uart1_rx_buf[1] = byte;
-      rx_state = PROTOCOL_STATE_SIGN;
+      rx_state = PROTOCOL_STATE_POS_SIGN;
+    }
+    else if (byte == PROTOCOL_LEN_FIELD_NEW) /* 新帧 7 字节: 位置+加速度 */
+    {
+      rx_new_frame = 1;
+      g_uart1_rx_buf[1] = byte;
+      rx_state = PROTOCOL_STATE_POS_SIGN;
     }
     else
     {
@@ -80,26 +96,54 @@ static void Protocol_ParseByte(uint8_t byte)
     }
     break;
 
-  case PROTOCOL_STATE_SIGN:
+  case PROTOCOL_STATE_POS_SIGN:
     g_uart1_rx_buf[2] = byte;
-    rx_state = PROTOCOL_STATE_VALUE;
+    rx_state = PROTOCOL_STATE_POS_VALUE;
     break;
 
-  case PROTOCOL_STATE_VALUE:
+  case PROTOCOL_STATE_POS_VALUE:
     g_uart1_rx_buf[3] = byte;
+    rx_state = rx_new_frame ? PROTOCOL_STATE_ACC_SIGN : PROTOCOL_STATE_CHECKSUM;
+    break;
+
+  case PROTOCOL_STATE_ACC_SIGN:
+    g_uart1_rx_buf[4] = byte;
+    rx_state = PROTOCOL_STATE_ACC_VALUE;
+    break;
+
+  case PROTOCOL_STATE_ACC_VALUE:
+    g_uart1_rx_buf[5] = byte;
     rx_state = PROTOCOL_STATE_CHECKSUM;
     break;
 
   case PROTOCOL_STATE_CHECKSUM:
-    g_uart1_rx_buf[4] = byte;
+    if (rx_new_frame) { g_uart1_rx_buf[6] = byte; }
+    else              { g_uart1_rx_buf[4] = byte; }
+
     if (Protocol_CheckSum() == byte)
     {
       /* 校验通过, 更新全局坐标数据 */
-      ball_pos.sign  = g_uart1_rx_buf[2];
-      ball_pos.value = g_uart1_rx_buf[3];
-      ball_pos.x_scaled = (g_uart1_rx_buf[2] == 0u) ? (int16_t)g_uart1_rx_buf[3]
-                                            : -(int16_t)g_uart1_rx_buf[3];
-      ball_pos.x_cm = (float)ball_pos.x_scaled / 10.0f;
+      ball_pos.sign      = g_uart1_rx_buf[2];
+      ball_pos.value     = g_uart1_rx_buf[3];
+      ball_pos.x_scaled  = (g_uart1_rx_buf[2] == 0u) ? (int16_t)g_uart1_rx_buf[3]
+                                                     : -(int16_t)g_uart1_rx_buf[3];
+      ball_pos.x_cm      = (float)ball_pos.x_scaled / 10.0f;
+
+      if (rx_new_frame)
+      {
+        ball_pos.accel_sign   = g_uart1_rx_buf[4];
+        ball_pos.accel_value  = g_uart1_rx_buf[5];
+        ball_pos.accel_scaled = (g_uart1_rx_buf[4] == 0u) ? (int16_t)g_uart1_rx_buf[5]
+                                                          : -(int16_t)g_uart1_rx_buf[5];
+        ball_pos.accel_cm_s2  = (float)ball_pos.accel_scaled * 10.0f;
+      }
+      else
+      {
+        ball_pos.accel_sign   = 0u;
+        ball_pos.accel_value  = 0u;
+        ball_pos.accel_scaled = 0;
+        ball_pos.accel_cm_s2  = 0.0f;
+      }
       rx_frame_pending = 1;
     }
     rx_state = PROTOCOL_STATE_IDLE; /* 下一字节即新帧帧头, 重新同步 */
@@ -113,6 +157,7 @@ static void Protocol_ParseByte(uint8_t byte)
 void Protocol_Init(void)
 {
   rx_state        = PROTOCOL_STATE_IDLE;
+  rx_new_frame    = 0;
   rx_frame_pending = 0;
 
   if (HAL_UART_Receive_IT(&huart1, &rx_byte, 1) != HAL_OK)
