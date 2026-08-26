@@ -335,12 +335,13 @@ while not app.need_exit():
             ok = 1
             # 微分预测补偿
             x_pred, vel = predict_x(x_cm, t_now)
+            # 检测到球才发包
+            send_x_packet(x_pred)
         else:
-            # 丢球: 重置预测器, 输出 0
+            # 丢球: 重置预测器, 停止发包
+            # STM32 侧 200ms 无新帧即判定视觉超时 → 电机回零保持。
+            # 注意: 绝不能在丢球时发 x=0, 否则 PID 会误以为球在中心。
             reset_predictor()
-            x_pred = 0.0
-
-        send_x_packet(x_pred)
 
         if frame_id % VISUAL_EVERY == 0:
             if cached_ball_info is not None:

@@ -166,7 +166,9 @@ void BallCtrl_Update(void)
 
   if (!g_ball.state.vision_ok)
   {
-    /* 视觉丢失: 电机回零保持 */
+    /* 视觉丢失: 电机回零保持;
+     * 同时清零速度估算, 防止视觉恢复瞬间微分项跳变 */
+    g_ball.state.x_vel_cm_s = 0.0f;
     theta = 0.0f;
   }
   else if (fabsf(e) < g_ball.param.deadband_cm)

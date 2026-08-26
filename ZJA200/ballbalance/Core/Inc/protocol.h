@@ -25,6 +25,9 @@ extern "C" {
  *   Byte4: checksum = (Byte0 + Byte1 + Byte2 + Byte3) & 0xFF
  *
  * 例: AA 04 00 20 CE -> x = +3.2 cm ; AA 04 01 0F BE -> x = -1.5 cm
+ *
+ * 丢球约定: 视觉模块未检测到球时停止发包 (不发 x=0.0)。
+ *           STM32 侧靠 ball_ctrl.c 的 200ms 无新帧超时判定视觉失效。
  */
 #define PROTOCOL_FRAME_LEN   5u
 #define PROTOCOL_HEADER      0xAAu
